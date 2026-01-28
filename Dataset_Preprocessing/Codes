@@ -1,0 +1,142 @@
+# Import essential libraries for data handling, numerical operations, and visualization
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Load the CSV dataset containing food order records
+df = pd.read_csv("/content/FoodOrdersData - FoodOrdersData.csv.csv")
+
+# Display the first few rows to understand the structure of the dataset
+df.head()
+
+# Get a concise summary of the dataset including column names, data types, and non-null counts
+df.info()
+
+# Check for missing values in each column
+df.isnull().sum()
+
+# Rename complex and nested column names to simple, readable, and flat column names
+# This improves code readability and makes downstream processing easier
+df = df.rename(columns={
+    "_id": "order_id",
+    "kitchenName": "kitchen_name",
+    "itemList[0].itemName": "item_name",
+    "itemList[0].itemType": "item_type",
+    "itemList[0].itemDescription": "item_description",
+    "addOns[0].addOnName": "addon1_name",
+    "addOns[1].addOnName": "addon2_name",
+    "addOns[2].addOnName": "addon3_name",
+    "addOns[3].addOnName": "addon4_name",
+    "addOns[0].count": "addon1_count",
+    "addOns[1].count": "addon2_count",
+    "addOns[2].count": "addon3_count",
+    "addOns[3].count": "addon4_count",
+    "packageName": "package_name",
+    "orderNo": "order_number",
+    "beforePackingImageUrl": "before_image_url",
+    "afterPackingImageUrl": "after_image_url"
+})
+
+# Print updated column names to verify successful renaming
+print(df.columns)
+
+# Count the number of Veg and Non-Veg orders to analyze dataset balance
+df["item_type"].value_counts()
+
+# Import Plotly for interactive visualizations
+import plotly.express as px
+
+# Prepare data for Veg vs Non-Veg distribution plot
+item_type_counts = df['item_type'].value_counts().reset_index()
+item_type_counts.columns = ['Item Type', 'Count']
+
+# Create an interactive pie chart showing Veg vs Non-Veg distribution
+fig = px.pie(
+    item_type_counts, 
+    values='Count', 
+    names='Item Type', 
+    title='<b>Distribution of Item Types in Food Orders</b>',
+    color_discrete_sequence=['green', 'red'],
+    hover_data=['Count']
+)
+
+# Display percentage and label inside the pie chart
+fig.update_traces(textposition='inside', textinfo='percent+label')
+
+# Improve layout aesthetics
+fig.update_layout(
+    uniformtext_minsize=12, 
+    uniformtext_mode='hide',
+    title_x=0.5,
+    title_font=dict(size=20)
+)
+
+# Show the plot
+fig.show()
+
+# Calculate frequency of each unique item description
+item_desc_freq = df["item_description"].value_counts()
+
+# Display the top 10 most frequently ordered items
+item_desc_freq.head(10)
+
+# Calculate the number of items corresponding to the top 20% of unique menu items
+top_20_percent = int(0.2 * len(item_desc_freq))
+
+# Calculate the share of total orders contributed by the top 20% items
+top_items_share = item_desc_freq.head(top_20_percent).sum() / item_desc_freq.sum()
+
+# Print the contribution percentage
+print("Order share from top 20% items:", round(top_items_share * 100, 2), "%")
+
+# Import Plotly again for clarity (safe even if already imported)
+import plotly.express as px
+
+# Calculate total order count for top 20% items
+top_items_count = item_desc_freq.head(top_20_percent).sum()
+
+# Calculate total order count for remaining 80% items
+remaining_items_count = item_desc_freq.sum() - top_items_count
+
+# Create a DataFrame to visualize long-tail distribution
+plot_data = pd.DataFrame({
+    'Category': ['Top 20% Items', 'Remaining Items'],
+    'Count': [top_items_count, remaining_items_count]
+})
+
+# Create a pie chart to show long-tail distribution of items
+fig = px.pie(
+    plot_data, 
+    values='Count', 
+    names='Category', 
+    title='<b>Order Share Distribution: Top 20% vs. Remaining Items</b>',
+    color='Category',
+    color_discrete_map={
+        'Top 20% Items': 'skyblue',
+        'Remaining Items': 'lightcoral'
+    },
+    hover_data=['Count']
+)
+
+# Display percentage and label inside the pie chart
+fig.update_traces(textposition='inside', textinfo='percent+label')
+
+# Improve layout aesthetics
+fig.update_layout(
+    uniformtext_minsize=12, 
+    uniformtext_mode='hide',
+    title_x=0.5,
+    title_font=dict(size=20)
+)
+
+# Show the plot
+fig.show()
+
+# Save the cleaned and preprocessed dataset to a CSV file
+# This file can be used for image downloading and model pipelines
+output_path = "cleaned_khana_dataset.csv"
+df.to_csv(output_path, index=False)
+
+# Confirm successful export
+print("Cleaned dataset saved as:", output_path)
