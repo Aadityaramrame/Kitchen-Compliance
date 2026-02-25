@@ -1,0 +1,372 @@
+# pipeline.py
+from abc import ABC, abstractmethod
+from PIL import Image
+import torch
+
+# ── Abstract Base ──────────────────────────────────────────────────────────────
+
+class BaseVLM(ABC):
+    @abstractmethod
+    def load_model(self, model_id: str): ...
+
+    @abstractmethod
+    def predict(self, image: Image.Image, prompt: str) -> str: ...
+
+
+# ── Qwen2.5-VL Implementation ───────────────────────────────────────
+
+class Qwen25VL(BaseVLM):
+    """
+    Supports: Qwen2.5-VL models (3B, 7B, 32B)
+    Uses specialized processor and generation APIs for Qwen.
+    """
+
+    def __init__(self, model_id: str, device: str = "auto", token: str = None):
+        self.model_id = model_id
+        self.device = device
+        self.token = token
+        self.model = None
+        self.processor = None
+        self.load_model(model_id)
+
+    def load_model(self, model_id: str):
+        from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
+
+        self.processor = AutoProcessor.from_pretrained(
+            model_id, 
+            trust_remote_code=True,
+            token=self.token
+        )
+
+        self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+            model_id,
+            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+            device_map=self.device,
+            trust_remote_code=True,
+            token=self.token
+        )
+
+        self.model.eval()
+        print(f"[Qwen2.5-VL] Loaded '{model_id}'")
+
+    def predict(self, image: Image.Image, prompt: str) -> str:
+        from qwen_vl_utils import process_vision_info
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": image},
+                    {"type": "text", "text": prompt},
+                ],
+            }
+        ]
+
+        text = self.processor.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+        image_inputs, video_inputs = process_vision_info(messages)
+
+        inputs = self.processor(
+            text=[text],
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            return_tensors="pt",
+        ).to(self.model.device)
+
+        with torch.no_grad():
+            output_ids = self.model.generate(
+                **inputs,
+                max_new_tokens=256,
+                do_sample=False,
+            )
+
+        trimmed = [
+            out[len(inp):]
+            for inp, out in zip(inputs.input_ids, output_ids)
+        ]
+        return self.processor.batch_decode(
+            trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )[0].strip()
+
+
+# ── Food Quality Pipeline ──────────────────────────────────────────────────────
+PROMPTS = {
+    "cooking_quality": """
+You are a food quality inspector for a cloud kitchen.
+Look at this food image and check:
+- Is the chapati burnt or undercooked?
+- Does the dal look watery or properly thick?
+- Is the rice fully cooked or half-cooked?
+- Does the food look fresh and high quality overall?
+Answer strictly in this format:
+Result: Good / Not Good
+Reason: (one line explanation)
+""",
+
+    "veg_nonveg": """
+You are a food classifier.
+Look at this food image and determine:
+- Does it contain any meat, chicken, fish, or eggs?
+Answer strictly in this format:
+Result: Veg / Non-Veg
+Confidence: High / Medium / Low
+Reason: (one line explanation)
+""",
+
+    "jain_check": """
+You are a Jain food compliance inspector.
+Jain food must NOT contain: onion, garlic, potato, carrot, or any root vegetables.
+Look at this food image and check if any of these are visible.
+Answer strictly in this format:
+Result: Jain Compliant / Not Jain Compliant
+Reason: (one line explanation)
+""",
+
+    "oil_colour_check": """
+You are a food quality inspector.
+Look at this food image and check:
+- Does the food look excessively oily or greasy?
+- Is the colour of the food natural and appetizing, or does it look off/burnt/pale?
+Answer strictly in this format:
+Oil Level: Normal / Excessive
+Colour: Good / Poor
+Result: Good / Not Good
+Reason: (one line explanation)
+""",
+
+    "salad_check": """
+You are a food plating inspector.
+A complete salad must contain ALL 5 of these items: onion, cucumber, tomato, carrot, lemon.
+Look at this image and identify which items are present and which are missing.
+Answer strictly in this format:
+Present: (list items you can see)
+Missing: (list items not visible)
+Result: Complete / Incomplete
+""",
+
+    "garnishing_check": """
+You are a food presentation inspector.
+Look at this food image and check:
+- Is there any garnishing present? (e.g. coriander, lemon wedge, sauce drizzle, microgreens)
+- Does the plating look professional and presentable?
+Answer strictly in this format:
+Garnishing: Present / Absent
+Plating: Good / Poor
+Result: Pass / Fail
+""",
+
+    "sop_compliance": """
+You are a strict cloud kitchen SOP compliance inspector.
+Evaluate this food image on the following parameters:
+1. Cooking quality (not burnt, not undercooked)
+2. Portion looks adequate
+3. No excessive oil
+4. Garnishing is present
+5. Plating is clean and professional
+6. Food colour looks natural and fresh
+
+For each parameter say Pass or Fail, then give an overall result.
+Answer strictly in this format:
+Cooking: Pass/Fail
+Portion: Pass/Fail
+Oil: Pass/Fail
+Garnishing: Pass/Fail
+Plating: Pass/Fail
+Colour: Pass/Fail
+Overall: Approved / Rejected
+Feedback: (one line actionable feedback for the kitchen staff if rejected)
+"""
+}
+
+class FoodQualityPipeline:
+    def __init__(self, vlm: BaseVLM):
+        self.vlm = vlm
+
+    def evaluate(self, image_path: str, checks: list = None) -> dict:
+        image = Image.open(image_path).convert("RGB")
+        checks = checks or list(PROMPTS.keys())
+        results = {}
+        for check in checks:
+            prompt = PROMPTS[check]
+            results[check] = self.vlm.predict(image, prompt)
+        return results
+
+    def parse_result(self, check_name: str, response: str) -> dict:
+        """Parse VLM response and extract key information"""
+        lines = response.strip().split('\n')
+        parsed = {'check': check_name, 'raw_response': response}
+        
+        for line in lines:
+            if ':' in line:
+                key, value = line.split(':', 1)
+                parsed[key.strip().lower()] = value.strip()
+        
+        return parsed
+
+    def is_quality_good(self, parsed_results: list) -> bool:
+        """Determine overall quality - all critical checks must pass"""
+        critical_checks = {
+            'cooking_quality': ['good'],
+            'oil_colour_check': ['good'],
+            'sop_compliance': ['approved']
+        }
+        
+        for result in parsed_results:
+            check = result.get('check', '')
+            if check in critical_checks:
+                for acceptable_value in critical_checks[check]:
+                    if acceptable_value.lower() in result.get('result', '').lower():
+                        break
+                else:
+                    return False
+        return True
+
+    def format_output(self, results: dict) -> None:
+        """Format and display results in a structured way"""
+        parsed_results = []
+        for check, response in results.items():
+            parsed = self.parse_result(check, response)
+            parsed_results.append(parsed)
+        
+        is_good = self.is_quality_good(parsed_results)
+        
+        print("\n" + "=" * 80)
+        print("🍽️  FOOD QUALITY ASSESSMENT REPORT")
+        print("=" * 80)
+        
+        # Overall Status
+        if is_good:
+            print("\n✅ OVERALL STATUS: APPROVED - EXCELLENT QUALITY!")
+            self._print_approval_message(parsed_results)
+        else:
+            print("\n❌ OVERALL STATUS: NEEDS IMPROVEMENT")
+            self._print_detailed_issues(parsed_results)
+        
+        # Detailed Breakdown
+        print("\n" + "-" * 80)
+        print("📋 DETAILED ASSESSMENT")
+        print("-" * 80)
+        self._print_detailed_breakdown(parsed_results, is_good)
+        
+        print("\n" + "=" * 80)
+
+    def _print_approval_message(self, parsed_results: list) -> None:
+        """Print short encouraging message when food is good (20-30 words)"""
+        print("\n🎉 CHEF'S KUDOS:")
+        print("   Outstanding work! The food looks delicious and well-prepared.")
+        print("   All quality standards met perfectly. Keep up this consistency!")
+        print("   Your dedication to excellence is commendable. 👨‍🍳")
+
+    def _print_detailed_issues(self, parsed_results: list) -> None:
+        """Print detailed issues when food quality is not good"""
+        print("\n⚠️  ISSUES FOUND:")
+        critical_issues = []
+        
+        for parsed in parsed_results:
+            check = parsed.get('check', '')
+            result = parsed.get('result', '').lower()
+            
+            # Identify critical failures
+            if check == 'cooking_quality' and 'not good' in result:
+                critical_issues.append(f"  • Cooking Quality: {parsed.get('reason', 'Issue detected')}")
+            elif check == 'oil_colour_check' and 'not good' in result:
+                critical_issues.append(f"  • Oil/Colour: {parsed.get('reason', 'Issue detected')}")
+            elif check == 'sop_compliance' and 'rejected' in result:
+                critical_issues.append(f"  • SOP Compliance: {parsed.get('feedback', 'Issue detected')}")
+            elif check == 'salad_check' and 'incomplete' in result:
+                critical_issues.append(f"  • Salad Missing Items: {parsed.get('missing', 'Items missing')}")
+        
+        for issue in critical_issues:
+            print(issue)
+
+    def _print_detailed_breakdown(self, parsed_results: list, is_good: bool) -> None:
+        """Print detailed breakdown of each check"""
+        
+        check_display_names = {
+            'cooking_quality': '🍚 Cooking Quality',
+            'veg_nonveg': '🥕 Veg/Non-Veg Classification',
+            'jain_check': '☮️  Jain Compliance',
+            'oil_colour_check': '🎨 Oil Level & Colour',
+            'salad_check': '🥗 Salad Completeness',
+            'garnishing_check': '✨ Garnishing & Plating',
+            'sop_compliance': '✅ SOP Compliance'
+        }
+        
+        for parsed in parsed_results:
+            check = parsed.get('check', '')
+            display_name = check_display_names.get(check, check.upper())
+            
+            print(f"\n{display_name}")
+            print("─" * 80)
+            
+            if is_good:
+                # Short summary for good quality
+                result = parsed.get('result', 'N/A')
+                print(f"Status: ✅ {result}")
+            else:
+                # Full details for issues
+                for key, value in parsed.items():
+                    if key not in ['check', 'raw_response']:
+                        if key == 'result':
+                            print(f"  {key.capitalize()}: {value}")
+                        elif key == 'reason' or key == 'feedback':
+                            print(f"  Details: {value}")
+                        else:
+                            print(f"  {key.capitalize()}: {value}")
+
+
+# ── CLI Entry Point ────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    import sys
+
+    # Qwen2.5-VL Models (public, no authentication needed)
+    # Available sizes: 3B, 7B, 32B
+    MODEL_ID = "Qwen/Qwen2.5-VL-3B-Instruct"
+
+    print("=" * 80)
+    print("🍽️  FOOD QUALITY ASSESSMENT PIPELINE")
+    print("=" * 80)
+    print(f"Model: {MODEL_ID}")
+    print("Loading model...")
+    print("=" * 80)
+    
+    try:
+        vlm = Qwen25VL(MODEL_ID)
+    except Exception as e:
+        print(f"\n❌ Model loading failed!")
+        print(f"Error: {str(e)[:300]}")
+        print("\n" + "=" * 80)
+        print("SOLUTION - Try these steps:")
+        print("=" * 80)
+        
+        print("\n1️⃣  Install required dependencies:")
+        print("   pip install qwen-vl-utils")
+        print("   pip install transformers pillow torch")
+        
+        print("\n2️⃣  Available Qwen2.5-VL models:")
+        print("   - Qwen/Qwen2.5-VL-3B-Instruct  (3B, recommended, ~7GB)")
+        print("   - Qwen/Qwen2.5-VL-7B-Instruct  (7B, more powerful, ~14GB)")
+        print("   - Qwen/Qwen2.5-VL-32B-Instruct (32B, best quality, ~60GB)")
+        
+        print("\n3️⃣  Make sure you have enough disk space for model download")
+        
+        print("=" * 80)
+        sys.exit(1)
+
+    print("✅ Model loaded successfully!")
+    print("=" * 80)
+    pipeline = FoodQualityPipeline(vlm)
+
+    image_path = input("\n📸 Enter image path: ").strip()
+    if not image_path:
+        print("No path provided.")
+        sys.exit(1)
+
+    print("\n⏳ Evaluating food quality... (this may take a moment)")
+    print("=" * 80)
+    
+    result = pipeline.evaluate(image_path)
+    pipeline.format_output(result)
