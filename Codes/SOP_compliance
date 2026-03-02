@@ -1,4 +1,4 @@
-# pipeline.py
+# updated best pipeline.py
 from abc import ABC, abstractmethod
 from PIL import Image
 import torch
@@ -91,100 +91,152 @@ class Qwen25VL(BaseVLM):
         )[0].strip()
 
 
-# ── Food Quality Pipeline ──────────────────────────────────────────────────────
+# ── Food Quality Prompts (STRICT MODE) ──────────────────────────────
+
 PROMPTS = {
     "cooking_quality": """
-You are a food quality inspector for a cloud kitchen.
-Look at this food image and check:
-- Is the chapati burnt or undercooked?
-- Does the dal look watery or properly thick?
-- Is the rice fully cooked or half-cooked?
-- Does the food look fresh and high quality overall?
-Answer strictly in this format:
+You are a STRICT food quality inspector. Be very critical.
+Look at this food image carefully.
+
+Check ONLY what you can ACTUALLY SEE:
+- If chapati/bread is NOT visible, say "Not present"
+- If dal/lentils are visible, check if watery or thick
+- If rice is visible, check if fully cooked
+- Overall freshness and quality
+
+IMPORTANT: Do NOT hallucinate items you cannot see!
+
+Answer STRICTLY in this format:
 Result: Good / Not Good
-Reason: (one line explanation)
+Chapati_Present: Yes / No / Not Applicable
+Dal_Status: Thick / Watery / Not Visible
+Rice_Status: Fully Cooked / Undercooked / Not Visible
+Freshness: Good / Poor / Unknown
+Reason: (what you actually see, be specific)
 """,
 
     "veg_nonveg": """
-You are a food classifier.
-Look at this food image and determine:
-- Does it contain any meat, chicken, fish, or eggs?
-Answer strictly in this format:
-Result: Veg / Non-Veg
+You are a food classifier. Look carefully at the image.
+
+Determine if you see:
+- Meat pieces (chicken, beef, mutton, fish)
+- Eggs
+- Vegetarian items only
+
+Answer STRICTLY:
+Result: Veg / Non-Veg / Unclear
 Confidence: High / Medium / Low
-Reason: (one line explanation)
+Reason: (what specific items you see that indicate this)
 """,
 
     "jain_check": """
-You are a Jain food compliance inspector.
-Jain food must NOT contain: onion, garlic, potato, carrot, or any root vegetables.
-Look at this food image and check if any of these are visible.
-Answer strictly in this format:
+You are a Jain food compliance inspector. Be STRICT.
+Jain food must NOT contain: onion, garlic, potato, carrot, root vegetables.
+
+Look carefully and identify EXACTLY what you see:
+- Is onion clearly visible? (YES/NO/UNCLEAR)
+- Is garlic visible? (YES/NO/UNCLEAR)
+- Are root vegetables present? (YES/NO/UNCLEAR)
+
+Answer STRICTLY:
 Result: Jain Compliant / Not Jain Compliant
-Reason: (one line explanation)
+Restricted_Items_Found: (list what you see)
+Confidence: High / Medium / Low
+Reason: (be specific about what you see)
 """,
 
     "oil_colour_check": """
-You are a food quality inspector.
-Look at this food image and check:
-- Does the food look excessively oily or greasy?
-- Is the colour of the food natural and appetizing, or does it look off/burnt/pale?
-Answer strictly in this format:
-Oil Level: Normal / Excessive
-Colour: Good / Poor
+You are a STRICT food quality inspector. Be critical about oil.
+
+Check CAREFULLY:
+- Does the food look greasy/oily? (swimming in oil?)
+- Is there visible sheen/gloss from oil?
+- Food color: natural, brown, golden, pale, dark/burnt, yellowish?
+- Overall appearance appetizing or not?
+
+CRITICAL: If you see excessive oil OR poor color, 
+Result MUST be "Not Good" - do NOT say "Good"
+
+Answer STRICTLY:
+Oil_Level: Normal / Excessive / Very Excessive
+Colour: Good / Poor / Burnt
 Result: Good / Not Good
-Reason: (one line explanation)
+Confidence: High / Medium / Low
+Reason: (describe what you actually see about oil and color)
 """,
 
     "salad_check": """
-You are a food plating inspector.
-A complete salad must contain ALL 5 of these items: onion, cucumber, tomato, carrot, lemon.
-Look at this image and identify which items are present and which are missing.
-Answer strictly in this format:
-Present: (list items you can see)
-Missing: (list items not visible)
+You are a food plating inspector. Check EXACTLY what you see.
+
+Required items for complete salad: onion, cucumber, tomato, carrot, lemon
+
+Look at the image and identify:
+- Which of these 5 items are CLEARLY VISIBLE?
+- Which are MISSING?
+
+Do NOT guess - only report what you can SEE.
+
+Answer STRICTLY:
+Present: (list items you clearly see)
+Missing: (list items NOT visible)
 Result: Complete / Incomplete
+Confidence: High / Medium / Low
 """,
 
     "garnishing_check": """
-You are a food presentation inspector.
-Look at this food image and check:
-- Is there any garnishing present? (e.g. coriander, lemon wedge, sauce drizzle, microgreens)
-- Does the plating look professional and presentable?
-Answer strictly in this format:
+You are a food presentation inspector. Look carefully.
+
+Check if you see garnishing such as:
+- Fresh coriander/cilantro
+- Lemon wedge
+- Sauce drizzle
+- Microgreens
+- Any decorative elements
+
+Also evaluate: Is plating clean and professional looking?
+
+Answer STRICTLY:
 Garnishing: Present / Absent
-Plating: Good / Poor
+Garnish_Type: (what do you see, if any)
+Plating: Good / Poor / Messy
 Result: Pass / Fail
+Confidence: High / Medium / Low
 """,
 
     "sop_compliance": """
-You are a strict cloud kitchen SOP compliance inspector.
-Evaluate this food image on the following parameters:
-1. Cooking quality (not burnt, not undercooked)
-2. Portion looks adequate
-3. No excessive oil
-4. Garnishing is present
-5. Plating is clean and professional
-6. Food colour looks natural and fresh
+You are a STRICT SOP compliance inspector. Be critical.
 
-For each parameter say Pass or Fail, then give an overall result.
-Answer strictly in this format:
+CRITICAL RULE: If ANY parameter fails, Overall MUST be REJECTED.
+
+Evaluate EACH parameter:
+1. Cooking quality - NOT burnt, NOT undercooked
+2. Portion - adequate size
+3. Oil Level - NOT excessive (if excessive, MUST be Fail)
+4. Garnishing - MUST be present (if absent, MUST be Fail)
+5. Plating - clean and professional (if poor, MUST be Fail)
+6. Color - natural and fresh (if poor/burnt, MUST be Fail)
+
+Answer STRICTLY in this format:
 Cooking: Pass/Fail
 Portion: Pass/Fail
-Oil: Pass/Fail
-Garnishing: Pass/Fail
-Plating: Pass/Fail
-Colour: Pass/Fail
+Oil: Pass/Fail (if oil is excessive, MUST be Fail)
+Garnishing: Pass/Fail (if absent, MUST be Fail)
+Plating: Pass/Fail (if poor, MUST be Fail)
+Colour: Pass/Fail (if poor/burnt, MUST be Fail)
 Overall: Approved / Rejected
-Feedback: (one line actionable feedback for the kitchen staff if rejected)
+Confidence: High / Medium / Low
+Reason: (explain your decision, reference other checks)
 """
 }
+
 
 class FoodQualityPipeline:
     def __init__(self, vlm: BaseVLM):
         self.vlm = vlm
+        self.contradictions = []
 
     def evaluate(self, image_path: str, checks: list = None) -> dict:
+        """Evaluate food quality by running all checks"""
         image = Image.open(image_path).convert("RGB")
         checks = checks or list(PROMPTS.keys())
         results = {}
@@ -205,22 +257,87 @@ class FoodQualityPipeline:
         
         return parsed
 
-    def is_quality_good(self, parsed_results: list) -> bool:
-        """Determine overall quality - all critical checks must pass"""
-        critical_checks = {
-            'cooking_quality': ['good'],
-            'oil_colour_check': ['good'],
-            'sop_compliance': ['approved']
-        }
+    def validate_consistency(self, parsed_results: list) -> tuple:
+        """
+        Check for contradictions in VLM responses.
+        Returns: (is_consistent, list_of_contradictions)
+        """
+        contradictions = []
         
-        for result in parsed_results:
-            check = result.get('check', '')
-            if check in critical_checks:
-                for acceptable_value in critical_checks[check]:
-                    if acceptable_value.lower() in result.get('result', '').lower():
-                        break
-                else:
-                    return False
+        oil_check = next((p for p in parsed_results if p['check'] == 'oil_colour_check'), None)
+        sop_check = next((p for p in parsed_results if p['check'] == 'sop_compliance'), None)
+        garnish_check = next((p for p in parsed_results if p['check'] == 'garnishing_check'), None)
+        
+        # Contradiction 1: Oil level contradiction
+        if oil_check and sop_check:
+            oil_result = oil_check.get('result', '').lower()
+            sop_oil = sop_check.get('oil', '').lower()
+            oil_level = oil_check.get('oil_level', '').lower()
+            
+            if ('not good' in oil_result or 'excessive' in oil_level) and 'pass' in sop_oil:
+                contradictions.append({
+                    'type': 'Oil Level Contradiction',
+                    'detail': f'Oil check says "{oil_check.get("result")}" but SOP says Oil: Pass',
+                    'decision': 'OVERRIDE TO FAIL (trust oil_colour_check)'
+                })
+        
+        # Contradiction 2: Garnishing contradiction
+        if garnish_check and sop_check:
+            garnish_result = garnish_check.get('garnishing', '').lower()
+            sop_garnish = sop_check.get('garnishing', '').lower()
+            
+            if 'absent' in garnish_result and 'pass' in sop_garnish:
+                contradictions.append({
+                    'type': 'Garnishing Contradiction',
+                    'detail': f'Garnishing check says "Absent" but SOP says Garnishing: Pass',
+                    'decision': 'OVERRIDE TO FAIL (garnishing is mandatory)'
+                })
+        
+        return len(contradictions) == 0, contradictions
+
+    def is_quality_good(self, parsed_results: list) -> bool:
+        """
+        Determine overall quality with strict contradiction handling
+        """
+        # Check for contradictions
+        is_consistent, contradictions = self.validate_consistency(parsed_results)
+        self.contradictions = contradictions
+        
+        # If contradictions found, use STRICT logic
+        if contradictions:
+            # Fail if ANY critical check fails
+            for result in parsed_results:
+                check = result.get('check', '')
+                
+                # Critical checks that cause immediate failure
+                if check in ['oil_colour_check', 'garnishing_check']:
+                    if 'not good' in result.get('result', '').lower() or \
+                       'fail' in result.get('result', '').lower():
+                        return False
+                
+                if check == 'sop_compliance':
+                    if 'rejected' in result.get('overall', '').lower():
+                        return False
+        
+        # Standard logic if no contradictions
+        else:
+            critical_checks = {
+                'cooking_quality': ['good'],
+                'oil_colour_check': ['good'],
+                'sop_compliance': ['approved']
+            }
+            
+            for result in parsed_results:
+                check = result.get('check', '')
+                if check in critical_checks:
+                    found_acceptable = False
+                    for acceptable_value in critical_checks[check]:
+                        if acceptable_value.lower() in result.get('result', '').lower():
+                            found_acceptable = True
+                            break
+                    if not found_acceptable:
+                        return False
+        
         return True
 
     def format_output(self, results: dict) -> None:
@@ -235,6 +352,14 @@ class FoodQualityPipeline:
         print("\n" + "=" * 80)
         print("🍽️  FOOD QUALITY ASSESSMENT REPORT")
         print("=" * 80)
+        
+        # Show contradictions if found
+        if self.contradictions:
+            print("\n⚠️  CONTRADICTION DETECTION SYSTEM ACTIVATED")
+            for i, contradiction in enumerate(self.contradictions, 1):
+                print(f"\n{i}. {contradiction['type']}")
+                print(f"   Issue: {contradiction['detail']}")
+                print(f"   Action: {contradiction['decision']}")
         
         # Overall Status
         if is_good:
@@ -253,33 +378,43 @@ class FoodQualityPipeline:
         print("\n" + "=" * 80)
 
     def _print_approval_message(self, parsed_results: list) -> None:
-        """Print short encouraging message when food is good (20-30 words)"""
+        """Print short encouraging message when food is good"""
         print("\n🎉 CHEF'S KUDOS:")
-        print("   Outstanding work! The food looks delicious and well-prepared.")
-        print("   All quality standards met perfectly. Keep up this consistency!")
-        print("   Your dedication to excellence is commendable. 👨‍🍳")
+        print("   Outstanding work! The food looks delicious, well-prepared, and")
+        print("   meets all quality standards. Keep maintaining this consistency!")
+        print("   Your attention to detail and cooking skill is commendable. 👨‍🍳")
 
     def _print_detailed_issues(self, parsed_results: list) -> None:
         """Print detailed issues when food quality is not good"""
-        print("\n⚠️  ISSUES FOUND:")
-        critical_issues = []
+        print("\n⚠️  CRITICAL ISSUES FOUND:")
         
         for parsed in parsed_results:
             check = parsed.get('check', '')
             result = parsed.get('result', '').lower()
             
-            # Identify critical failures
-            if check == 'cooking_quality' and 'not good' in result:
-                critical_issues.append(f"  • Cooking Quality: {parsed.get('reason', 'Issue detected')}")
-            elif check == 'oil_colour_check' and 'not good' in result:
-                critical_issues.append(f"  • Oil/Colour: {parsed.get('reason', 'Issue detected')}")
-            elif check == 'sop_compliance' and 'rejected' in result:
-                critical_issues.append(f"  • SOP Compliance: {parsed.get('feedback', 'Issue detected')}")
-            elif check == 'salad_check' and 'incomplete' in result:
-                critical_issues.append(f"  • Salad Missing Items: {parsed.get('missing', 'Items missing')}")
-        
-        for issue in critical_issues:
-            print(issue)
+            if check == 'oil_colour_check':
+                if 'not good' in result:
+                    oil = parsed.get('oil_level', 'Unknown')
+                    color = parsed.get('colour', 'Unknown')
+                    reason = parsed.get('reason', '')
+                    print(f"\n  🎨 Oil & Colour Issue:")
+                    print(f"     Oil Level: {oil}")
+                    print(f"     Colour: {color}")
+                    print(f"     Details: {reason}")
+            
+            elif check == 'garnishing_check':
+                if 'fail' in result:
+                    garnish = parsed.get('garnishing', 'Unknown')
+                    plating = parsed.get('plating', 'Unknown')
+                    print(f"\n  ✨ Presentation Issue:")
+                    print(f"     Garnishing: {garnish}")
+                    print(f"     Plating: {plating}")
+            
+            elif check == 'salad_check':
+                missing = parsed.get('missing', 'Unknown')
+                if missing and 'not' not in missing.lower():
+                    print(f"\n  🥗 Salad Incomplete:")
+                    print(f"     Missing Items: {missing}")
 
     def _print_detailed_breakdown(self, parsed_results: list, is_good: bool) -> None:
         """Print detailed breakdown of each check"""
@@ -302,19 +437,13 @@ class FoodQualityPipeline:
             print("─" * 80)
             
             if is_good:
-                # Short summary for good quality
                 result = parsed.get('result', 'N/A')
                 print(f"Status: ✅ {result}")
             else:
-                # Full details for issues
                 for key, value in parsed.items():
                     if key not in ['check', 'raw_response']:
-                        if key == 'result':
-                            print(f"  {key.capitalize()}: {value}")
-                        elif key == 'reason' or key == 'feedback':
-                            print(f"  Details: {value}")
-                        else:
-                            print(f"  {key.capitalize()}: {value}")
+                        if value:
+                            print(f"  {key.replace('_', ' ').title()}: {value}")
 
 
 # ── CLI Entry Point ────────────────────────────────────────────────────────────
@@ -322,12 +451,11 @@ class FoodQualityPipeline:
 if __name__ == "__main__":
     import sys
 
-    # Qwen2.5-VL Models (public, no authentication needed)
-    # Available sizes: 3B, 7B, 32B
     MODEL_ID = "Qwen/Qwen2.5-VL-3B-Instruct"
 
     print("=" * 80)
-    print("🍽️  FOOD QUALITY ASSESSMENT PIPELINE")
+    print("🍽️  FOOD QUALITY ASSESSMENT PIPELINE v2.0")
+    print("   (With Contradiction Detection & Strict Logic)")
     print("=" * 80)
     print(f"Model: {MODEL_ID}")
     print("Loading model...")
@@ -338,22 +466,7 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n❌ Model loading failed!")
         print(f"Error: {str(e)[:300]}")
-        print("\n" + "=" * 80)
-        print("SOLUTION - Try these steps:")
-        print("=" * 80)
-        
-        print("\n1️⃣  Install required dependencies:")
-        print("   pip install qwen-vl-utils")
-        print("   pip install transformers pillow torch")
-        
-        print("\n2️⃣  Available Qwen2.5-VL models:")
-        print("   - Qwen/Qwen2.5-VL-3B-Instruct  (3B, recommended, ~7GB)")
-        print("   - Qwen/Qwen2.5-VL-7B-Instruct  (7B, more powerful, ~14GB)")
-        print("   - Qwen/Qwen2.5-VL-32B-Instruct (32B, best quality, ~60GB)")
-        
-        print("\n3️⃣  Make sure you have enough disk space for model download")
-        
-        print("=" * 80)
+        print("\nTry: pip install qwen-vl-utils")
         sys.exit(1)
 
     print("✅ Model loaded successfully!")
@@ -365,7 +478,7 @@ if __name__ == "__main__":
         print("No path provided.")
         sys.exit(1)
 
-    print("\n⏳ Evaluating food quality... (this may take a moment)")
+    print("\n⏳ Evaluating food quality... (with contradiction detection)")
     print("=" * 80)
     
     result = pipeline.evaluate(image_path)
