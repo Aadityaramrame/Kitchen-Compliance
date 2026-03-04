@@ -94,20 +94,33 @@ You are a senior kitchen hygiene compliance officer.
 Inspect this image of kitchen staff carefully.
 
 Check this in order:
-Step 1 — Are the hands/wrists visible in the image? Yes or No
-Step 2 — Gloves: Are gloves worn on the hands? Yes or No
+Step 1 — Are the torso/body visible in the image? Yes or No
+Step 2 — Apron: Is an apron worn? Yes or No
+Step 3 — Is the head/hair visible in the image? Yes or No
+Step 4 — Hairnet: Is a hairnet or head covering worn? Yes or No
+Step 5 — Are the hands/wrists visible in the image? Yes or No
+Step 6 — Gloves: Are gloves worn on the hands? Yes or No
 
 Reply in exactly this format:
+Torso visible: Yes/No
+Apron: Yes/No
+Head visible: Yes/No
+Hairnet: Yes/No
 Hands visible: Yes/No
 Gloves: Yes/No
 Verdict: APPROVED or REJECTED
 
 Decision logic:
+- If torso is NOT visible → Verdict: REJECTED | Torso not visible
+- If torso IS visible but NO apron → Verdict: REJECTED | Apron not detected
+- If head is NOT visible → Verdict: REJECTED | Head not visible
+- If head IS visible but NO hairnet → Verdict: REJECTED | Hairnet not detected
 - If hands are NOT visible → Verdict: REJECTED | Hands not visible
 - If hands ARE visible but NO gloves → Verdict: REJECTED | Gloves not detected
-- If hands ARE visible and gloves ARE worn → Verdict: APPROVED | Gloves worn correctly
+- If apron IS worn AND hairnet IS worn AND gloves ARE worn → Verdict: APPROVED | Apron, hairnet and gloves worn correctly
 
-You MUST follow this logic exactly. If Gloves: No, then Verdict MUST be REJECTED.
+You MUST follow this logic exactly. Check in order: if apron fails, report that first. Then hairnet. Then gloves.
+If any check fails (Apron: No or Hairnet: No or Gloves: No), then Verdict MUST be REJECTED with the appropriate reason.
 """
 
 
