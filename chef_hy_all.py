@@ -110,17 +110,16 @@ Hands visible: Yes/No
 Gloves: Yes/No
 Verdict: APPROVED or REJECTED
 
-Decision logic:
+Decision logic - Report the FIRST failure in order:
 - If torso is NOT visible → Verdict: REJECTED | Torso not visible
-- If torso IS visible but NO apron → Verdict: REJECTED | Apron not detected
-- If head is NOT visible → Verdict: REJECTED | Head not visible
-- If head IS visible but NO hairnet → Verdict: REJECTED | Hairnet not detected
-- If hands are NOT visible → Verdict: REJECTED | Hands not visible
-- If hands ARE visible but NO gloves → Verdict: REJECTED | Gloves not detected
-- If apron IS worn AND hairnet IS worn AND gloves ARE worn → Verdict: APPROVED | Apron, hairnet and gloves worn correctly
+- Else if apron is NO → Verdict: REJECTED | Apron not detected
+- Else if head is NOT visible → Verdict: REJECTED | Head not visible
+- Else if hairnet is NO → Verdict: REJECTED | Hairnet not detected
+- Else if hands are NOT visible → Verdict: REJECTED | Hands not visible
+- Else if gloves is NO → Verdict: REJECTED | Gloves not detected
+- Else (all YES) → Verdict: APPROVED | Apron, hairnet and gloves worn correctly
 
-You MUST follow this logic exactly. Check in order: if apron fails, report that first. Then hairnet. Then gloves.
-If any check fails (Apron: No or Hairnet: No or Gloves: No), then Verdict MUST be REJECTED with the appropriate reason.
+IMPORTANT: Report only the FIRST failure you find when checking top to bottom. Do not report later failures.
 """
 
 
